@@ -1,0 +1,8 @@
+{
+    "confidence_threshold": 0.6,
+    "detection_method": "opencv_dnn",
+    "max_samples": 50,
+    "attendance_duration": 30,
+    "auto_save": true,
+    "theme": "dark"
+}
