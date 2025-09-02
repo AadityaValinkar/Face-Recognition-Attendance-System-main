@@ -1,0 +1,9 @@
+{
+    "algorithm": "LBPH",
+    "radius": 1,
+    "neighbors": 8,
+    "training_date": "2025-09-02T22:21:14.264986",
+    "samples_count": 150,
+    "students_count": 2,
+    "accuracy": 100.0
+}
