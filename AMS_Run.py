@@ -13,78 +13,147 @@ import subprocess
 import threading
 from pathlib import Path
 import json
-
-# Modern UI Configuration
-ctk.set_appearance_mode("dark")  # Modes: "System", "Dark", "Light"
-ctk.set_default_color_theme("blue")  # Themes: "blue", "green", "dark-blue"
-
-# Check for required modules
-try:
-    import pymysql.connections
-
-    MYSQL_AVAILABLE = True
-except ImportError:
-    MYSQL_AVAILABLE = False
-    print("Warning: pymysql not installed. Database features will be disabled.")
-
-# Enhanced face detection with multiple models
-FACE_DETECTION_METHODS = {
-    'opencv_dnn': 'opencv_face_detector_uint8.pb',
-    'haar_cascade': 'haarcascade_frontalface_default.xml',
-    'mtcnn': None  # Would require mtcnn library
-}
+import hashlib
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 
+# --- Main Application Class ---
 class ModernFaceAttendanceSystem:
     def __init__(self):
         self.root = ctk.CTk()
+
+        # --- Modern UI Configuration ---
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+
         self.root.title("FAMS - Modern Face Recognition Attendance System")
         self.root.geometry("1400x800")
         self.root.resizable(True, True)
+        self.root.withdraw()
 
-        # Create directories
+        self.current_user = None
         self.create_directories()
+        self.show_login_window()
 
-        # Initialize variables
-        self.cursor = None
-        self.connection = None
-        self.current_frame = None
-        self.video_capture = None
-        self.all_attendance_df = pd.DataFrame()  # To store all attendance data
-
-        # Setup UI
+    def initialize_main_app(self):
+        """Initializes the main application UI after successful login."""
         self.setup_ui()
-
-        # Load configuration
         self.load_config()
+        self.configure_ui_for_role()
+
+    # --------------------------------------------------------------------
+    # --- 1. LOGIN AND USER MANAGEMENT ---
+    # --------------------------------------------------------------------
+    def show_login_window(self):
+        self.login_window = ctk.CTkToplevel(self.root)
+        self.login_window.title("Login - FAMS")
+        self.login_window.geometry("400x450")
+        self.login_window.protocol("WM_DELETE_WINDOW", self.root.destroy)
+        self.login_window.grab_set()
+
+        login_frame = ctk.CTkFrame(self.login_window, corner_radius=15)
+        login_frame.pack(expand=True, padx=20, pady=20)
+
+        self.users_file = Path('data/users.csv')
+        is_first_run = not self.users_file.exists() or os.path.getsize(self.users_file) == 0
+
+        title_text = "First-Time Admin Setup" if is_first_run else "User Login"
+        button_text = "Create Admin" if is_first_run else "Login"
+
+        ctk.CTkLabel(login_frame, text=title_text, font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(20, 10))
+        ctk.CTkLabel(login_frame, text="Username").pack(anchor="w", padx=20)
+        self.username_entry = ctk.CTkEntry(login_frame, width=250, height=35)
+        self.username_entry.pack(pady=5)
+        ctk.CTkLabel(login_frame, text="Password").pack(anchor="w", padx=20)
+        self.password_entry = ctk.CTkEntry(login_frame, show="*", width=250, height=35)
+        self.password_entry.pack(pady=5)
+        if is_first_run:
+            ctk.CTkLabel(login_frame, text="This will be your master account.", text_color="gray").pack(pady=10)
+        self.login_error_label = ctk.CTkLabel(login_frame, text="", text_color="red")
+        self.login_error_label.pack(pady=5)
+        login_button = ctk.CTkButton(login_frame, text=button_text, command=self.handle_login, height=40)
+        login_button.pack(pady=20, padx=20, fill="x")
+
+    def hash_password(self, password):
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    def handle_login(self):
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+        if not username or not password:
+            self.login_error_label.configure(text="Please enter all fields.")
+            return
+
+        is_first_run = not self.users_file.exists() or os.path.getsize(self.users_file) == 0
+        if is_first_run:
+            with open(self.users_file, 'w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(['username', 'password_hash', 'role', 'student_id'])
+                writer.writerow([username, self.hash_password(password), 'admin', 'N/A'])
+            messagebox.showinfo("Success", "Admin account created successfully. Please log in.")
+            self.login_window.destroy()
+            self.show_login_window()
+            return
+
+        password_hash = self.hash_password(password)
+        with open(self.users_file, 'r') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if row['username'] == username and row['password_hash'] == password_hash:
+                    self.current_user = row
+                    self.login_window.destroy()
+                    self.root.deiconify()
+                    self.initialize_main_app()
+                    return
+        self.login_error_label.configure(text="Invalid username or password.")
+
+    def handle_logout(self):
+        self.current_user = None
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        self.root.withdraw()
+        self.show_login_window()
+
+    def configure_ui_for_role(self):
+        role = self.current_user['role']
+        self.root.title(f"FAMS - Logged in as: {self.current_user['username']} ({role.capitalize()})")
+        for btn in self.nav_buttons:
+            btn.pack_forget()
+
+        if role in ['admin', 'teacher']:
+            self.nav_buttons[0].pack(fill="x", padx=15, pady=8)
+            self.nav_buttons[1].pack(fill="x", padx=15, pady=8)
+            self.nav_buttons[2].pack(fill="x", padx=15, pady=8)
+            self.nav_buttons[3].pack(fill="x", padx=15, pady=8)
+            self.nav_buttons[4].pack(fill="x", padx=15, pady=8)
+            self.nav_buttons[5].pack(fill="x", padx=15, pady=8)
+            self.nav_buttons[6].pack(fill="x", padx=15, pady=8)
+            self.nav_buttons[7].pack(fill="x", padx=15, pady=8)
+            if role == 'admin':
+                self.nav_buttons[8].pack(fill="x", padx=15, pady=8)
+            self.show_welcome_page()
+        elif role == 'student':
+            self.nav_buttons[9].pack(fill="x", padx=15, pady=8)
+            self.nav_buttons[7].pack(fill="x", padx=15, pady=8)
+            self.show_my_attendance_page()
+
+    # --------------------------------------------------------------------
+    # --- 2. CORE APP STRUCTURE ---
+    # --------------------------------------------------------------------
 
     def create_directories(self):
-        """Create necessary directories with modern structure"""
         directories = [
-            'data/training_images',
-            'data/models',
-            'data/attendance/automatic',
-            'data/attendance/manual',
-            'data/student_details',
-            'data/exports',
-            'config'
+            'data/training_images', 'data/models', 'data/attendance/automatic',
+            'data/attendance/manual', 'data/student_details', 'data/exports', 'config'
         ]
-
         for directory in directories:
             Path(directory).mkdir(parents=True, exist_ok=True)
 
     def load_config(self):
-        """Load system configuration"""
         config_file = Path('config/settings.json')
-        default_config = {
-            'confidence_threshold': 0.6,
-            'detection_method': 'opencv_dnn',
-            'max_samples': 50,
-            'attendance_duration': 30,
-            'auto_save': True,
-            'theme': 'dark'
-        }
-
+        default_config = {'confidence_threshold': 80.0, 'detection_method': 'haar_cascade', 'max_samples': 50,
+                          'theme': 'dark'}
         if config_file.exists():
             with open(config_file, 'r') as f:
                 self.config = json.load(f)
@@ -93,13 +162,10 @@ class ModernFaceAttendanceSystem:
             self.save_config()
 
     def save_config(self):
-        """Save system configuration"""
-        config_file = Path('config/settings.json')
-        with open(config_file, 'w') as f:
+        with open('config/settings.json', 'w') as f:
             json.dump(self.config, f, indent=4)
 
     def setup_ui(self):
-        """Setup modern UI components"""
         self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_columnconfigure(1, weight=1)
         self.create_header()
@@ -108,63 +174,60 @@ class ModernFaceAttendanceSystem:
         self.create_status_bar()
 
     def create_header(self):
-        """Create modern header with gradient-like effect"""
         header_frame = ctk.CTkFrame(self.root, height=80, corner_radius=0)
-        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew")
         header_frame.grid_propagate(False)
-        title = ctk.CTkLabel(header_frame, text="🎯 FAMS - Face Recognition Attendance System",
-                             font=ctk.CTkFont(size=28, weight="bold"), text_color="#00D4FF")
-        title.pack(side="left", padx=30, pady=20)
-        self.status_indicator = ctk.CTkLabel(header_frame, text="🟢 System Ready", font=ctk.CTkFont(size=14),
-                                             text_color="#00FF88")
-        self.status_indicator.pack(side="right", padx=30, pady=20)
+        ctk.CTkLabel(header_frame, text="🎯 FAMS - Face Recognition Attendance System",
+                     font=ctk.CTkFont(size=28, weight="bold"), text_color="#00D4FF").pack(side="left", padx=30, pady=20)
+        user_info_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        user_info_frame.pack(side="right", padx=20, pady=10)
+        ctk.CTkLabel(user_info_frame,
+                     text=f"{self.current_user['username']} ({self.current_user['role'].capitalize()})").pack()
+        ctk.CTkButton(user_info_frame, text="Logout", command=self.handle_logout, fg_color="red",
+                      hover_color="#c0392b").pack(pady=5)
 
     def create_sidebar(self):
-        """Create modern sidebar with navigation"""
         sidebar_frame = ctk.CTkFrame(self.root, width=280, corner_radius=0)
-        sidebar_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
+        sidebar_frame.grid(row=1, column=0, sticky="nsew")
         sidebar_frame.grid_propagate(False)
-        nav_buttons = [
+        nav_button_data = [
             ("📷 Capture Images", self.show_capture_page, "#FF6B6B"),
             ("🤖 Train Model", self.show_training_page, "#4ECDC4"),
             ("📊 Auto Attendance", self.show_auto_attendance_page, "#45B7D1"),
             ("✏️ Manual Attendance", self.show_manual_attendance_page, "#96CEB4"),
             ("👥 View Students", self.show_students_page, "#FFEAA7"),
             ("📈 Analytics", self.show_analytics_page, "#DDA0DD"),
-            ("⚙️ Settings", self.show_settings_page, "#A8A8A8")
+            ("💹 Attendance Trends", self.show_trends_page, "#1abc9c"),
+            ("⚙️ Settings", self.show_settings_page, "#A8A8A8"),
+            ("🛡️ Admin Panel", self.show_admin_panel_page, "#e74c3c"),
+            ("📅 My Attendance", self.show_my_attendance_page, "#3498db")
         ]
         self.nav_buttons = []
-        for i, (text, command, color) in enumerate(nav_buttons):
+        for text, command, color in nav_button_data:
             btn = ctk.CTkButton(sidebar_frame, text=text, command=command, height=50,
-                                font=ctk.CTkFont(size=16, weight="bold"), fg_color=color,
-                                hover_color=self.adjust_color_brightness(color, 0.8), corner_radius=10, anchor="w")
-            btn.pack(fill="x", padx=15, pady=8)
+                                font=ctk.CTkFont(size=16, weight="bold"), fg_color=color, hover_color="#555555",
+                                corner_radius=10, anchor="w")
             self.nav_buttons.append(btn)
         stats_frame = ctk.CTkFrame(sidebar_frame)
-        stats_frame.pack(fill="x", padx=15, pady=20)
+        stats_frame.pack(fill="x", padx=15, pady=20, side="bottom")
         ctk.CTkLabel(stats_frame, text="📊 Quick Stats", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=10)
         self.stats_labels = {}
-        stats = [("Students", "0"), ("Models", "0"), ("Sessions", "0")]
-        for stat, value in stats:
+        for stat in ["Students", "Models", "Sessions"]:
             frame = ctk.CTkFrame(stats_frame, fg_color="transparent")
             frame.pack(fill="x", padx=10, pady=5)
             ctk.CTkLabel(frame, text=stat, font=ctk.CTkFont(size=12)).pack(side="left")
-            label = ctk.CTkLabel(frame, text=value, font=ctk.CTkFont(size=12, weight="bold"))
+            label = ctk.CTkLabel(frame, text="0", font=ctk.CTkFont(size=12, weight="bold"))
             label.pack(side="right")
             self.stats_labels[stat.lower()] = label
         self.update_stats()
 
-    def adjust_color_brightness(self, color, factor):
-        return color
-
     def create_main_content(self):
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=0)
         self.main_frame.grid(row=1, column=1, sticky="nsew", padx=10, pady=10)
-        self.show_welcome_page()
 
     def create_status_bar(self):
         status_frame = ctk.CTkFrame(self.root, height=40, corner_radius=0)
-        status_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
+        status_frame.grid(row=2, column=0, columnspan=2, sticky="ew")
         status_frame.grid_propagate(False)
         self.status_text = ctk.CTkLabel(status_frame, text="Ready", font=ctk.CTkFont(size=12))
         self.status_text.pack(side="left", padx=20, pady=10)
@@ -180,37 +243,14 @@ class ModernFaceAttendanceSystem:
         self.clear_main_frame()
         welcome_frame = ctk.CTkScrollableFrame(self.main_frame)
         welcome_frame.pack(fill="both", expand=True, padx=20, pady=20)
-        ctk.CTkLabel(welcome_frame, text="Welcome to Modern FAMS", font=ctk.CTkFont(size=32, weight="bold"),
-                     text_color="#00D4FF").pack(pady=20)
-        features = [
-            {"title": "📷 Advanced Face Capture", "desc": "Capture images with quality validation.", "color": "#FF6B6B"},
-            {"title": "🤖 AI-Powered Training", "desc": "Train models with improved accuracy.", "color": "#4ECDC4"},
-            {"title": "📊 Smart Attendance", "desc": "Automatic attendance with confidence scoring.",
-             "color": "#45B7D1"},
-            {"title": "📈 Analytics Dashboard", "desc": "Comprehensive reporting and filtering.", "color": "#96CEB4"}]
-        features_frame = ctk.CTkFrame(welcome_frame, fg_color="transparent")
-        features_frame.pack(fill="x", pady=20)
-        for i, feature in enumerate(features):
-            card = ctk.CTkFrame(features_frame, corner_radius=15)
-            card.grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="ew")
-            ctk.CTkLabel(card, text=feature["title"], font=ctk.CTkFont(size=18, weight="bold"),
-                         text_color=feature["color"]).pack(pady=(20, 10))
-            ctk.CTkLabel(card, text=feature["desc"], font=ctk.CTkFont(size=14), wraplength=250).pack(padx=20,
-                                                                                                     pady=(0, 20))
-        features_frame.grid_columnconfigure((0, 1), weight=1)
-        actions_frame = ctk.CTkFrame(welcome_frame)
-        actions_frame.pack(fill="x", pady=20)
-        ctk.CTkLabel(actions_frame, text="Quick Actions", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=10)
-        button_frame = ctk.CTkFrame(actions_frame, fg_color="transparent")
-        button_frame.pack(fill="x", padx=20, pady=10)
-        quick_buttons = [("Start Capture", self.show_capture_page, "#FF6B6B"),
-                         ("Train Now", self.show_training_page, "#4ECDC4"),
-                         ("Take Attendance", self.show_auto_attendance_page, "#45B7D1")]
-        for i, (text, command, color) in enumerate(quick_buttons):
-            btn = ctk.CTkButton(button_frame, text=text, command=command, fg_color=color, height=40,
-                                font=ctk.CTkFont(size=14, weight="bold"))
-            btn.grid(row=0, column=i, padx=10, sticky="ew")
-            button_frame.grid_columnconfigure(i, weight=1)
+        role = self.current_user['role'].capitalize()
+        ctk.CTkLabel(welcome_frame, text=f"Welcome, {self.current_user['username']} ({role})!",
+                     font=ctk.CTkFont(size=32, weight="bold"), text_color="#00D4FF").pack(pady=20)
+        ctk.CTkLabel(welcome_frame, text="Select an option from the sidebar to begin.").pack(pady=10)
+
+    # --------------------------------------------------------------------
+    # --- 3. CORE PAGE FUNCTIONS ---
+    # --------------------------------------------------------------------
 
     def show_capture_page(self):
         self.clear_main_frame()
@@ -223,9 +263,9 @@ class ModernFaceAttendanceSystem:
         form_frame = ctk.CTkFrame(input_frame)
         form_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
         ctk.CTkLabel(form_frame, text="Student Details", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=10)
-        ctk.CTkLabel(form_frame, text="Student ID:").pack(anchor="w", padx=20, pady=(10, 0))
-        self.enrollment_entry = ctk.CTkEntry(form_frame, placeholder_text="Enter student ID (must be a number)",
-                                             height=40, font=ctk.CTkFont(size=14))
+        ctk.CTkLabel(form_frame, text="Student ID (must be a number):").pack(anchor="w", padx=20, pady=(10, 0))
+        self.enrollment_entry = ctk.CTkEntry(form_frame, placeholder_text="Enter student ID", height=40,
+                                             font=ctk.CTkFont(size=14))
         self.enrollment_entry.pack(fill="x", padx=20, pady=5)
         ctk.CTkLabel(form_frame, text="Full Name:").pack(anchor="w", padx=20, pady=(10, 0))
         self.name_entry = ctk.CTkEntry(form_frame, placeholder_text="Enter full name", height=40,
@@ -295,10 +335,13 @@ class ModernFaceAttendanceSystem:
 
     def capture_images(self, enrollment, name, department):
         try:
-            cap = cv2.VideoCapture(0)
+            cap = cv2.VideoCapture(1)  # CHANGED FOR DROIDCAM
             if not cap.isOpened():
-                messagebox.showerror("Error", "Could not open camera!")
-                return
+                cap = cv2.VideoCapture(0)  # Fallback to default
+                if not cap.isOpened():
+                    messagebox.showerror("Error", "Could not open any camera!")
+                    return
+
             detector = self.get_face_detector()
             if detector is None:
                 messagebox.showerror("Error", "Could not load face detector!")
@@ -646,10 +689,12 @@ class ModernFaceAttendanceSystem:
                     id_to_info[student_id] = {'name': row['name'], 'enrollment': str(row['enrollment'])}
                 except ValueError:
                     print(f"Skipping student with invalid enrollment ID: {row['enrollment']}")
-            cap = cv2.VideoCapture(0)
+            cap = cv2.VideoCapture(1)  # CHANGED FOR DROIDCAM
             if not cap.isOpened():
-                messagebox.showerror("Error", "Could not open camera!")
-                return
+                cap = cv2.VideoCapture(0)
+                if not cap.isOpened():
+                    messagebox.showerror("Error", "Could not open camera!")
+                    return
             face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
             confidence_threshold = self.confidence_slider.get()
             while self.attendance_active:
@@ -1181,77 +1226,212 @@ class ModernFaceAttendanceSystem:
             self.stats_labels['models'].configure(text=str(model_count))
             self.stats_labels['sessions'].configure(text=str(self.count_attendance_sessions()))
 
+    # --------------------------------------------------------------------
+    # --- 4. NEW ROLE-SPECIFIC PAGES ---
+    # --------------------------------------------------------------------
+
+    def show_trends_page(self):
+        """Displays the attendance trends page."""
+        self.clear_main_frame()
+        trends_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        trends_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        ctk.CTkLabel(trends_frame, text="💹 Attendance Trends", font=ctk.CTkFont(size=28, weight="bold"),
+                     text_color="#1abc9c").pack(pady=(0, 20))
+
+        container = ctk.CTkFrame(trends_frame, fg_color="transparent")
+        container.pack(fill="both", expand=True)
+
+        subject_list_frame = ctk.CTkScrollableFrame(container, width=250)
+        subject_list_frame.pack(side="left", fill="y", padx=(0, 10))
+        ctk.CTkLabel(subject_list_frame, text="Subjects", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=10)
+
+        self.load_all_attendance_data()
+        if self.all_attendance_df.empty:
+            ctk.CTkLabel(subject_list_frame, text="No attendance data found.").pack(padx=10)
+            return
+
+        subjects = self.all_attendance_df['subject'].unique()
+        for subject in subjects:
+            ctk.CTkButton(subject_list_frame, text=subject, command=lambda s=subject: self.plot_subject_trend(s)).pack(
+                fill="x", pady=2, padx=10)
+
+        self.graph_frame = ctk.CTkFrame(container)
+        self.graph_frame.pack(side="left", fill="both", expand=True)
+        ctk.CTkLabel(self.graph_frame, text="Select a subject to view its attendance trend.",
+                     font=ctk.CTkFont(size=18)).pack(expand=True)
+
+    def plot_subject_trend(self, subject_name):
+        """Calculates and plots the attendance trend for a given subject."""
+        for widget in self.graph_frame.winfo_children():
+            widget.destroy()
+
+        total_students = self.count_students()
+        if total_students == 0:
+            messagebox.showerror("Error", "No students registered. Cannot calculate percentages.")
+            return
+
+        subject_df = self.all_attendance_df[self.all_attendance_df['subject'] == subject_name].copy()
+        if subject_df.empty:
+            ctk.CTkLabel(self.graph_frame, text=f"No data for {subject_name}.").pack(expand=True)
+            return
+
+        daily_counts = subject_df.groupby('date')['enrollment'].nunique()
+        daily_percentage = (daily_counts / total_students) * 100
+
+        if daily_percentage.empty:
+            ctk.CTkLabel(self.graph_frame, text=f"Not enough data to plot a trend for {subject_name}.").pack(
+                expand=True)
+            return
+
+        daily_percentage = daily_percentage.sort_index()
+
+        plt.style.use('dark_background')
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
+
+        daily_percentage.plot(kind='line', ax=ax, marker='o', color='#1abc9c', linestyle='-', markersize=8)
+
+        ax.set_title(f"Attendance Trend for {subject_name}", fontsize=16, color='white', pad=20)
+        ax.set_xlabel("Date", fontsize=12, color='white')
+        ax.set_ylabel("Attendance (%)", fontsize=12, color='white')
+        ax.grid(True, linestyle='--', alpha=0.3)
+        ax.tick_params(axis='x', rotation=45, colors='white')
+        ax.tick_params(axis='y', colors='white')
+        ax.set_ylim(0, 110)
+
+        for index, value in daily_percentage.items():
+            ax.text(index, value + 3, f"{value:.1f}%", ha='center', color='#00FF88')
+
+        fig.tight_layout()
+        fig.patch.set_facecolor('#2a2a2a')
+        ax.set_facecolor('#343638')
+
+        canvas = FigureCanvasTkAgg(fig, master=self.graph_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+
+        plt.close(fig)
+
+    def show_admin_panel_page(self):
+        """Displays the admin panel for managing users."""
+        self.clear_main_frame()
+        admin_frame = ctk.CTkFrame(self.main_frame)
+        admin_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        ctk.CTkLabel(admin_frame, text="🛡️ Admin Panel - User Management", font=ctk.CTkFont(size=28, weight="bold"),
+                     text_color="#e74c3c").pack(pady=20)
+        add_user_frame = ctk.CTkFrame(admin_frame)
+        add_user_frame.pack(fill="x", padx=20, pady=10)
+        ctk.CTkLabel(add_user_frame, text="Add New User", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=10)
+        self.new_user_entry = ctk.CTkEntry(add_user_frame, placeholder_text="Username")
+        self.new_user_entry.pack(fill="x", padx=20, pady=5)
+        self.new_pass_entry = ctk.CTkEntry(add_user_frame, placeholder_text="Password", show="*")
+        self.new_pass_entry.pack(fill="x", padx=20, pady=5)
+        self.new_role_var = ctk.StringVar(value="teacher")
+        ctk.CTkOptionMenu(add_user_frame, variable=self.new_role_var, values=["teacher", "student"]).pack(fill="x",
+                                                                                                          padx=20,
+                                                                                                          pady=5)
+        self.new_student_id_entry = ctk.CTkEntry(add_user_frame, placeholder_text="Student ID (if student)")
+        self.new_student_id_entry.pack(fill="x", padx=20, pady=5)
+        ctk.CTkButton(add_user_frame, text="Add User", command=self.add_user).pack(pady=10)
+        user_list_frame = ctk.CTkFrame(admin_frame)
+        user_list_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        self.user_treeview = ttk.Treeview(user_list_frame, columns=("Username", "Role", "Student ID"), show='headings')
+        self.user_treeview.heading("Username", text="Username")
+        self.user_treeview.heading("Role", text="Role")
+        self.user_treeview.heading("Student ID", text="Student ID")
+        self.user_treeview.pack(side="left", fill="both", expand=True)
+        remove_btn = ctk.CTkButton(user_list_frame, text="Remove Selected User", fg_color="red",
+                                   command=self.remove_user)
+        remove_btn.pack(pady=10, padx=10, side="bottom")
+        self.refresh_user_list()
+
+    def refresh_user_list(self):
+        """Clears and re-populates the user list in the admin panel."""
+        for item in self.user_treeview.get_children():
+            self.user_treeview.delete(item)
+        with open(self.users_file, 'r') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                self.user_treeview.insert("", "end", values=(row['username'], row['role'], row['student_id']))
+
+    def add_user(self):
+        """Adds a new user to the users.csv file."""
+        username = self.new_user_entry.get()
+        password = self.new_pass_entry.get()
+        role = self.new_role_var.get()
+        student_id = self.new_student_id_entry.get() if role == 'student' else 'N/A'
+        if not username or not password:
+            messagebox.showerror("Error", "Username and password cannot be empty.")
+            return
+        users_df = pd.read_csv(self.users_file)
+        if username in users_df['username'].values:
+            messagebox.showerror("Error", "Username already exists.")
+            return
+        with open(self.users_file, 'a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow([username, self.hash_password(password), role, student_id])
+        self.refresh_user_list()
+        self.new_user_entry.delete(0, tk.END)
+        self.new_pass_entry.delete(0, tk.END)
+        self.new_student_id_entry.delete(0, tk.END)
+
+    def remove_user(self):
+        """Removes the selected user from the users.csv file."""
+        selected_item = self.user_treeview.selection()
+        if not selected_item:
+            messagebox.showerror("Error", "Please select a user to remove.")
+            return
+        username_to_remove = self.user_treeview.item(selected_item)['values'][0]
+        if username_to_remove == 'admin':
+            messagebox.showerror("Error", "Cannot remove the primary admin account.")
+            return
+        if messagebox.askyesno("Confirm", f"Are you sure you want to remove user '{username_to_remove}'?"):
+            users = pd.read_csv(self.users_file)
+            users = users[users.username != username_to_remove]
+            users.to_csv(self.users_file, index=False)
+            self.refresh_user_list()
+
+    def show_my_attendance_page(self):
+        """Displays the attendance records for the logged-in student."""
+        self.clear_main_frame()
+        student_frame = ctk.CTkFrame(self.main_frame)
+        student_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        ctk.CTkLabel(student_frame, text="📅 My Attendance Records", font=ctk.CTkFont(size=28, weight="bold"),
+                     text_color="#3498db").pack(pady=20)
+        tree_frame = ctk.CTkFrame(student_frame)
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        style = ttk.Style()
+        style.theme_use("default")
+        cols = ("Date", "Subject", "Time", "Method")
+        attendance_treeview = ttk.Treeview(tree_frame, columns=cols, show='headings')
+        for col in cols: attendance_treeview.heading(col, text=col)
+        attendance_treeview.pack(fill="both", expand=True)
+        student_id = self.current_user['student_id']
+        self.load_all_attendance_data()
+        if self.all_attendance_df.empty:
+            ctk.CTkLabel(student_frame, text="No attendance records found in the system.").pack()
+            return
+        my_records = self.all_attendance_df[self.all_attendance_df['enrollment'].astype(str) == str(student_id)]
+        if my_records.empty:
+            ctk.CTkLabel(student_frame, text="You have no attendance records yet.").pack()
+        else:
+            for index, row in my_records.iterrows():
+                attendance_treeview.insert("", "end", values=(row.get('date'), row.get('subject'), row.get('time'),
+                                                              row.get('method')))
+
     def run(self):
+        """Starts the application's main event loop."""
         self.root.mainloop()
 
 
-# Main execution
+# --- Main Execution ---
 if __name__ == "__main__":
     try:
-        import customtkinter as ctk
-    except ImportError:
-        import tkinter as tk
-        from tkinter import messagebox
-
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("Missing Dependency",
-                             "CustomTkinter is required.\nPlease install it using: pip install customtkinter")
-        root.destroy()
-        exit()
-
-    missing_deps = []
-    try:
-        import cv2
-    except ImportError:
-        missing_deps.append("opencv-contrib-python")
-    try:
-        import pandas as pd
-    except ImportError:
-        missing_deps.append("pandas")
-    try:
-        from PIL import Image, ImageTk
-    except ImportError:
-        missing_deps.append("Pillow")
-
-    if missing_deps:
-        import tkinter as tk
-        from tkinter import messagebox
-
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("Missing Dependencies",
-                             f"The following packages are required:\n\n{', '.join(missing_deps)}\n\nPlease install them.")
-        root.destroy()
-        exit()
-
-    try:
-        recognizer = cv2.face.LBPHFaceRecognizer_create()
-    except AttributeError:
-        import tkinter as tk
-        from tkinter import messagebox
-
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("Missing Package",
-                             "Face recognition module not found.\nPlease install 'opencv-contrib-python'.")
-        root.destroy()
-        exit()
-
-    try:
-        print("🚀 Starting Modern FAMS...")
         app = ModernFaceAttendanceSystem()
-        print("📊 System initialized successfully!")
         app.run()
     except Exception as e:
-        import tkinter as tk
-        from tkinter import messagebox
         import traceback
 
-        print("An unhandled exception occurred:")
+        messagebox.showerror("Application Error", f"A critical error occurred:\n\n{str(e)}\n\nSee console for details.")
         print(traceback.format_exc())
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("Application Error",
-                             f"A critical error occurred:\n\n{str(e)}\n\nPlease check the console for details.")
-        root.destroy()
+
